@@ -26,14 +26,45 @@ def load_labels(labels_path):
         return json.load(f)
 
 
-def preprocess_image(path, size=48):
-    img = Image.open(path).convert("L")
+def preprocess_image(path, channels=1, size=48):
+    # Load image in appropriate mode
+    mode = "RGB" if channels == 3 else "L"
+    img = Image.open(path).convert(mode)
+    # Resize to square target size
     if img.size != (size, size):
         img = img.resize((size, size))
     arr = np.asarray(img, dtype=np.float32) / 255.0
-    # shape to (1,1,H,W)
-    arr = arr.reshape(1, 1, size, size)
+    # Convert HWC -> CHW for RGB
+    if channels == 3:
+        arr = arr.transpose(2, 0, 1)  # (C,H,W)
+        arr = arr.reshape(1, 3, size, size)
+    else:
+        arr = arr.reshape(1, 1, size, size)
     return arr
+
+
+def get_input_spec(session):
+    """Infer (channels, size) from ONNX session input shape.
+
+    Returns (channels, size). If dims are dynamic/unknown, defaults to (3, 224).
+    """
+    inp = session.get_inputs()[0]
+    shape = inp.shape
+    # Expect NCHW: [N, C, H, W]
+    channels = 3
+    size = 224
+    try:
+        if isinstance(shape, (list, tuple)) and len(shape) == 4:
+            c = shape[1]
+            h = shape[2]
+            # Prefer integer dims; fallback to defaults
+            if isinstance(c, int):
+                channels = c
+            if isinstance(h, int):
+                size = h
+    except Exception:
+        pass
+    return channels, size
 
 
 def plot_confusion(cm, classes, outpath, title="Confusion matrix", cmap=plt.cm.Blues):
@@ -53,7 +84,7 @@ def plot_confusion(cm, classes, outpath, title="Confusion matrix", cmap=plt.cm.B
 
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument("--model", default="public/models/onnx_model.fixed.onnx")
+    p.add_argument("--model", default="public/models/emotion_yolo11n_cls.onnx")
     p.add_argument("--data", default="data/fer2013")
     p.add_argument("--labels", default="data/fer2013/labels.json")
     p.add_argument("--out", default="results")
@@ -112,8 +143,10 @@ def main():
 
     session = ort.InferenceSession(args.model, providers=["CPUExecutionProvider"])
     input_name = session.get_inputs()[0].name
+    channels, size = get_input_spec(session)
     print("Model inputs:", [i.name for i in session.get_inputs()])
     print("Model outputs:", [o.name for o in session.get_outputs()])
+    print(f"Detected input spec: channels={channels}, size={size}")
 
     y_true = []
     y_pred = []
@@ -123,7 +156,7 @@ def main():
         if not img_path.exists():
             print("Missing image, skipping:", img_path)
             continue
-        arr = preprocess_image(img_path)
+        arr = preprocess_image(img_path, channels=channels, size=size)
         feeds = {input_name: arr}
         out = session.run(None, feeds)
         logits = out[0].ravel()
