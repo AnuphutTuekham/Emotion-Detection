@@ -80,11 +80,16 @@ export default function Home() {
   const [status, setStatus] = useState<string>("ยังไม่เริ่ม");
   const [emotion, setEmotion] = useState<string>("-");
   const [conf, setConf] = useState<number>(0);
+  const [isRecording, setIsRecording] = useState<boolean>(false);
+  const [fps, setFps] = useState<number>(0);
 
   const cvRef = useRef<CvType | null>(null);
   const faceCascadeRef = useRef<unknown>(null);
   const sessionRef = useRef<ort.InferenceSession | null>(null);
   const classesRef = useRef<string[] | null>(null);
+  const streamRef = useRef<MediaStream | null>(null);
+  const frameCountRef = useRef<number>(0);
+  const loopRef = useRef<boolean>(true);
 
   // Load OpenCV.js
   // async function loadOpenCV() {
@@ -200,9 +205,27 @@ export default function Home() {
     });
     if (!videoRef.current) return;
     videoRef.current.srcObject = stream;
+    streamRef.current = stream;
     await videoRef.current.play();
     setStatus("กำลังทำงาน...");
+    setIsRecording(true);
     requestAnimationFrame(loop);
+  }
+
+  // 4.5) Stop camera
+  function stopCamera() {
+    loopRef.current = false;
+    if (streamRef.current) {
+      streamRef.current.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+    }
+    if (videoRef.current) {
+      videoRef.current.srcObject = null;
+    }
+    setStatus("ปิดกล้องแล้ว");
+    setEmotion("-");
+    setConf(0);
+    setIsRecording(false);
   }
 
   // 5) Preprocess face ROI -> tensor
@@ -245,6 +268,12 @@ export default function Home() {
   // 7) Main loop
   async function loop() {
     try {
+      // คำนวณ FPS - อัปเดตทุก 30 เฟรม
+      frameCountRef.current++;
+      if (frameCountRef.current % 30 === 0) {
+        setFps(30); // แสดงประมาณ 30 FPS
+      }
+
       const cv = cvRef.current as any;
       const faceCascade = faceCascadeRef.current as any;
       const session = sessionRef.current;
@@ -253,7 +282,7 @@ export default function Home() {
       const video = videoRef.current;
       const canvas = canvasRef.current;
       if (!cv || !faceCascade || !session || !classes || !video || !canvas) {
-        requestAnimationFrame(loop);
+        if (loopRef.current) requestAnimationFrame(loop);
         return;
       }
 
@@ -355,15 +384,16 @@ export default function Home() {
       gray.delete();
       faces.delete();
 
-      requestAnimationFrame(loop);
+      if (loopRef.current) requestAnimationFrame(loop);
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : String(e);
       setStatus(`ผิดพลาด: ${errMsg}`);
     }
   }
 
-  // Boot sequence
+  // Boot sequence + cleanup
   useEffect(() => {
+    loopRef.current = true;
     (async () => {
       try {
         setStatus("กำลังโหลด OpenCV...");
@@ -381,6 +411,9 @@ export default function Home() {
         setStatus(`เริ่มต้นไม่สำเร็จ: ${errMsg}`);
       }
     })();
+    return () => {
+      loopRef.current = false;
+    };
   }, []);
 
   return (
@@ -395,7 +428,7 @@ export default function Home() {
         </div>
 
         {/* Status Card */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
           {/* Status */}
           <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border border-purple-500/30 backdrop-blur-sm">
             <div className="text-sm text-gray-400 mb-2">Status</div>
@@ -423,16 +456,32 @@ export default function Home() {
               />
             </div>
           </div>
+
+          {/* FPS Display */}
+          <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border border-cyan-500/30 backdrop-blur-sm">
+            <div className="text-sm text-gray-400 mb-2">Frame Rate</div>
+            <div className="text-3xl font-bold text-cyan-400">{fps}</div>
+            <div className="text-xs text-gray-500 mt-1">FPS</div>
+          </div>
         </div>
 
         {/* Control Section */}
-        <div className="flex gap-4 mb-8 justify-center">
+        <div className="flex gap-4 mb-8 justify-center flex-wrap">
           <button
-            className="px-8 py-3 rounded-xl font-semibold bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl active:scale-95"
+            className="px-8 py-3 rounded-xl font-semibold bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
             onClick={startCamera}
+            disabled={isRecording}
           >
             ▶ Start Camera
           </button>
+          {isRecording && (
+            <button
+              className="px-8 py-3 rounded-xl font-semibold bg-linear-to-r from-red-500 to-rose-600 hover:from-red-600 hover:to-rose-700 text-white transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl active:scale-95"
+              onClick={stopCamera}
+            >
+              ⏹ Stop Camera
+            </button>
+          )}
         </div>
 
         {/* Canvas Display */}
