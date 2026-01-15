@@ -186,7 +186,7 @@ export default function Home() {
   // 3) Load ONNX model + classes
   async function loadModel() {
     const session = await ort.InferenceSession.create(
-      "/models/emotion_yolo11n_cls.onnx",
+      "/models/onnx_model.onnx",
       { executionProviders: ["wasm"] }
     );
     sessionRef.current = session;
@@ -229,10 +229,36 @@ export default function Home() {
   }
 
   // 5) Preprocess face ROI -> tensor
+  // Convert to grayscale 48x48 to match model input shape [1,1,48,48]
   function preprocessToTensor(faceCanvas: HTMLCanvasElement) {
-    // YOLO classification มักรับ input เป็น [1,3,H,W] float32 (0..1)
-    // เพื่อให้ง่าย: resize เป็น 64x64 และทำ RGB
-    const size = 64;
+    const size = 48;
+
+    // Try using OpenCV.js if available for equalization
+    const cv = cvRef.current as any;
+    if (cv && (cv as any).Mat) {
+      const src = cv.imread(faceCanvas);
+      const dst = new cv.Mat();
+      const dsize = new cv.Size(size, size);
+      cv.resize(src, dst, dsize, 0, 0, cv.INTER_LINEAR);
+
+      const gray = new cv.Mat();
+      cv.cvtColor(dst, gray, cv.COLOR_RGBA2GRAY);
+      cv.equalizeHist(gray, gray);
+
+      const data = new Uint8Array(gray.data);
+      const float = new Float32Array(1 * 1 * size * size);
+      for (let i = 0; i < size * size; i++) {
+        float[i] = data[i] / 255;
+      }
+
+      src.delete();
+      dst.delete();
+      gray.delete();
+
+      return new ort.Tensor("float32", float, [1, 1, size, size]);
+    }
+
+    // Fallback: canvas resize + grayscale
     const tmp = document.createElement("canvas");
     tmp.width = size;
     tmp.height = size;
@@ -240,20 +266,16 @@ export default function Home() {
     ctx.drawImage(faceCanvas, 0, 0, size, size);
 
     const imgData = ctx.getImageData(0, 0, size, size).data; // RGBA
-    const float = new Float32Array(1 * 3 * size * size);
-
-    // CHW
-    let idx = 0;
-    for (let c = 0; c < 3; c++) {
-      for (let i = 0; i < size * size; i++) {
-        const r = imgData[i * 4 + 0] / 255;
-        const g = imgData[i * 4 + 1] / 255;
-        const b = imgData[i * 4 + 2] / 255;
-        float[idx++] = c === 0 ? r : c === 1 ? g : b;
-      }
+    const float = new Float32Array(1 * 1 * size * size);
+    for (let i = 0; i < size * size; i++) {
+      const r = imgData[i * 4 + 0];
+      const g = imgData[i * 4 + 1];
+      const b = imgData[i * 4 + 2];
+      const y = 0.299 * r + 0.587 * g + 0.114 * b;
+      float[i] = y / 255;
     }
 
-    return new ort.Tensor("float32", float, [1, 3, size, size]);
+    return new ort.Tensor("float32", float, [1, 1, size, size]);
   }
 
   // 6) Softmax
