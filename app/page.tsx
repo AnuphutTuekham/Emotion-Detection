@@ -185,11 +185,20 @@ export default function Home() {
 
   // 3) Load ONNX model + classes
   async function loadModel() {
-    const session = await ort.InferenceSession.create(
-      "/models/onnx_model.onnx",
-      { executionProviders: ["wasm"] }
-    );
+    // prefer a fixed model if the initializer-cleaned model exists
+    let modelPath = "/models/onnx_model.fixed.onnx";
+    try {
+      const check = await fetch(modelPath, { method: "HEAD" });
+      if (!check.ok) modelPath = "/models/onnx_model.onnx";
+    } catch {
+      modelPath = "/models/onnx_model.onnx";
+    }
+
+    const session = await ort.InferenceSession.create(modelPath, { executionProviders: ["wasm"] });
     sessionRef.current = session;
+
+    // log input/output names to help debug shape/name mismatches
+    console.info("ONNX session loaded. inputs=", session.inputNames, "outputs=", session.outputNames);
 
     const clsRes = await fetch("/models/classes.json");
     if (!clsRes.ok) throw new Error("โหลด classes.json ไม่สำเร็จ");
@@ -345,25 +354,65 @@ export default function Home() {
       }
 
       if (bestRect) {
-        // crop face into a small canvas
+        // ensure rect has valid size (integers) and clamp to canvas bounds
+        const srcCanvasW = canvas.width;
+        const srcCanvasH = canvas.height;
+        let sx = Math.max(0, Math.floor(bestRect.x));
+        let sy = Math.max(0, Math.floor(bestRect.y));
+        let sWidth = Math.max(1, Math.floor(bestRect.width));
+        let sHeight = Math.max(1, Math.floor(bestRect.height));
+
+        // clamp width/height so they don't exceed canvas
+        if (sx + sWidth > srcCanvasW) sWidth = Math.max(1, srcCanvasW - sx);
+        if (sy + sHeight > srcCanvasH) sHeight = Math.max(1, srcCanvasH - sy);
+
+        if (sWidth <= 0 || sHeight <= 0) {
+          console.warn("Skipping frame due to invalid bestRect:", bestRect);
+          src.delete();
+          gray.delete();
+          faces.delete();
+          requestAnimationFrame(loop);
+          return;
+        }
+
+        // crop face into a small canvas (destination uses clamped integer sizes)
         const faceCanvas = document.createElement("canvas");
-        faceCanvas.width = bestRect.width;
-        faceCanvas.height = bestRect.height;
+        faceCanvas.width = sWidth;
+        faceCanvas.height = sHeight;
         const fctx = faceCanvas.getContext("2d")!;
         fctx.drawImage(
           canvas,
-          bestRect.x,
-          bestRect.y,
-          bestRect.width,
-          bestRect.height,
+          sx,
+          sy,
+          sWidth,
+          sHeight,
           0,
           0,
-          bestRect.width,
-          bestRect.height
+          sWidth,
+          sHeight
         );
 
         // run onnx
-        const input = preprocessToTensor(faceCanvas);
+        let input: ort.Tensor | null = null;
+        try {
+          input = preprocessToTensor(faceCanvas);
+        } catch (err) {
+          // if preprocessing fails (e.g. zero-size), skip this frame
+          console.warn("preprocessToTensor failed:", err);
+          src.delete();
+          gray.delete();
+          faces.delete();
+          requestAnimationFrame(loop);
+          return;
+        }
+
+        if (!input) {
+          src.delete();
+          gray.delete();
+          faces.delete();
+          requestAnimationFrame(loop);
+          return;
+        }
 
         // ชื่อ input/output อาจต่างกันตามการ export
         // วิธีง่าย: ใช้ key ตัวแรกของ session.inputNames
