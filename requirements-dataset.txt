@@ -1,0 +1,7 @@
+pandas
+numpy
+Pillow
+requests
+onnxruntime
+scikit-learn
+matplotlib
