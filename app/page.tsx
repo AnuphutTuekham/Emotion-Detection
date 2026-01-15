@@ -185,13 +185,13 @@ export default function Home() {
 
   // 3) Load ONNX model + classes
   async function loadModel() {
-    // prefer a fixed model if the initializer-cleaned model exists
-    let modelPath = "/models/onnx_model.fixed.onnx";
+    // Prefer YOLO11 classification model; fallback to fixed ONNX if missing
+    let modelPath = "/models/emotion_yolo11n_cls.onnx";
     try {
       const check = await fetch(modelPath, { method: "HEAD" });
-      if (!check.ok) modelPath = "/models/onnx_model.onnx";
+      if (!check.ok) modelPath = "/models/onnx_model.fixed.onnx";
     } catch {
-      modelPath = "/models/onnx_model.onnx";
+      modelPath = "/models/onnx_model.fixed.onnx";
     }
 
     const session = await ort.InferenceSession.create(modelPath, { executionProviders: ["wasm"] });
@@ -238,36 +238,11 @@ export default function Home() {
   }
 
   // 5) Preprocess face ROI -> tensor
-  // Convert to grayscale 48x48 to match model input shape [1,1,48,48]
+  // Convert to RGB 64x64 to match YOLO11 model input shape [1,3,64,64]
   function preprocessToTensor(faceCanvas: HTMLCanvasElement) {
-    const size = 48;
+    const size = 64;
 
-    // Try using OpenCV.js if available for equalization
-    const cv = cvRef.current as any;
-    if (cv && (cv as any).Mat) {
-      const src = cv.imread(faceCanvas);
-      const dst = new cv.Mat();
-      const dsize = new cv.Size(size, size);
-      cv.resize(src, dst, dsize, 0, 0, cv.INTER_LINEAR);
-
-      const gray = new cv.Mat();
-      cv.cvtColor(dst, gray, cv.COLOR_RGBA2GRAY);
-      cv.equalizeHist(gray, gray);
-
-      const data = new Uint8Array(gray.data);
-      const float = new Float32Array(1 * 1 * size * size);
-      for (let i = 0; i < size * size; i++) {
-        float[i] = data[i] / 255;
-      }
-
-      src.delete();
-      dst.delete();
-      gray.delete();
-
-      return new ort.Tensor("float32", float, [1, 1, size, size]);
-    }
-
-    // Fallback: canvas resize + grayscale
+    // Resize ROI to target size
     const tmp = document.createElement("canvas");
     tmp.width = size;
     tmp.height = size;
@@ -275,16 +250,25 @@ export default function Home() {
     ctx.drawImage(faceCanvas, 0, 0, size, size);
 
     const imgData = ctx.getImageData(0, 0, size, size).data; // RGBA
-    const float = new Float32Array(1 * 1 * size * size);
-    for (let i = 0; i < size * size; i++) {
-      const r = imgData[i * 4 + 0];
-      const g = imgData[i * 4 + 1];
-      const b = imgData[i * 4 + 2];
-      const y = 0.299 * r + 0.587 * g + 0.114 * b;
-      float[i] = y / 255;
+    const float = new Float32Array(1 * 3 * size * size); // NCHW
+
+    // Fill channels in CHW order
+    // index formula: c*size*size + y*size + x
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const idxRGBA = (y * size + x) * 4;
+        const r = imgData[idxRGBA + 0] / 255;
+        const g = imgData[idxRGBA + 1] / 255;
+        const b = imgData[idxRGBA + 2] / 255;
+
+        const base = y * size + x;
+        float[0 * size * size + base] = r;
+        float[1 * size * size + base] = g;
+        float[2 * size * size + base] = b;
+      }
     }
 
-    return new ort.Tensor("float32", float, [1, 1, size, size]);
+    return new ort.Tensor("float32", float, [1, 3, size, size]);
   }
 
   // 6) Softmax
