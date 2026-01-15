@@ -66,11 +66,12 @@
 
 
 "use client";
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 import { useEffect, useRef, useState } from "react";
 import * as ort from "onnxruntime-web";
 
-type CvType = any;
+type CvType = unknown;
 
 export default function Home() {
   const videoRef = useRef<HTMLVideoElement | null>(null);
@@ -81,7 +82,7 @@ export default function Home() {
   const [conf, setConf] = useState<number>(0);
 
   const cvRef = useRef<CvType | null>(null);
-  const faceCascadeRef = useRef<any>(null);
+  const faceCascadeRef = useRef<unknown>(null);
   const sessionRef = useRef<ort.InferenceSession | null>(null);
   const classesRef = useRef<string[] | null>(null);
 
@@ -113,9 +114,10 @@ export default function Home() {
   async function loadOpenCV() {
   if (typeof window === "undefined") return;
 
+  const win = window as { cv?: unknown };
   // ready แล้ว
-  if ((window as any).cv?.Mat) {
-    cvRef.current = (window as any).cv;
+  if ((win.cv as any)?.Mat) {
+    cvRef.current = win.cv as unknown;
     return;
   }
 
@@ -125,12 +127,14 @@ export default function Home() {
     script.async = true;
 
     script.onload = () => {
-      const cv = (window as any).cv;
+      const win = window as { cv?: unknown };
+      const cv = (win.cv as any);
       if (!cv) return reject(new Error("OpenCV โหลดแล้วแต่ window.cv ไม่มีค่า"));
 
       const waitReady = () => {
-        if ((window as any).cv?.Mat) {
-          cvRef.current = (window as any).cv;
+        const win = window as { cv?: unknown };
+        if ((win.cv as any)?.Mat) {
+          cvRef.current = win.cv as unknown;
           resolve();
         } else {
           setTimeout(waitReady, 50);
@@ -153,7 +157,7 @@ export default function Home() {
 
   // Load Haar cascade file into OpenCV FS
   async function loadCascade() {
-    const cv = cvRef.current;
+    const cv = cvRef.current as any;
     if (!cv) throw new Error("cv ยังไม่พร้อม");
 
     const cascadeUrl = "/opencv/haarcascade_frontalface_default.xml";
@@ -161,14 +165,14 @@ export default function Home() {
     if (!res.ok) throw new Error("โหลด cascade ไม่สำเร็จ");
     const data = new Uint8Array(await res.arrayBuffer());
 
-    // เขียนไฟล์ลง OpenCV virtual FS
+    // เขียนไฟลลง OpenCV virtual FS
     const cascadePath = "haarcascade_frontalface_default.xml";
     try {
-      cv.FS_unlink(cascadePath);
+      (cv as any).FS_unlink(cascadePath);
     } catch {}
-    cv.FS_createDataFile("/", cascadePath, data, true, false, false);
+    (cv as any).FS_createDataFile("/", cascadePath, data, true, false, false);
 
-    const faceCascade = new cv.CascadeClassifier();
+    const faceCascade = new (cv as any).CascadeClassifier();
     const loaded = faceCascade.load(cascadePath);
     if (!loaded) throw new Error("cascade load() ไม่สำเร็จ");
     faceCascadeRef.current = faceCascade;
@@ -241,8 +245,8 @@ export default function Home() {
   // 7) Main loop
   async function loop() {
     try {
-      const cv = cvRef.current;
-      const faceCascade = faceCascadeRef.current;
+      const cv = cvRef.current as any;
+      const faceCascade = faceCascadeRef.current as any;
       const session = sessionRef.current;
       const classes = classesRef.current;
 
@@ -339,8 +343,9 @@ export default function Home() {
       faces.delete();
 
       requestAnimationFrame(loop);
-    } catch (e: any) {
-      setStatus(`ผิดพลาด: ${e?.message ?? e}`);
+    } catch (e: unknown) {
+      const errMsg = e instanceof Error ? e.message : String(e);
+      setStatus(`ผิดพลาด: ${errMsg}`);
     }
   }
 
@@ -358,43 +363,81 @@ export default function Home() {
         await loadModel();
 
         setStatus("พร้อม เริ่มกดปุ่ม Start");
-      } catch (e: any) {
-        setStatus(`เริ่มต้นไม่สำเร็จ: ${e?.message ?? e}`);
+      } catch (e: unknown) {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        setStatus(`เริ่มต้นไม่สำเร็จ: ${errMsg}`);
       }
     })();
   }, []);
 
   return (
-    <main className="min-h-screen p-6 space-y-4">
-      <h1 className="text-2xl font-bold">Face Emotion (OpenCV + YOLO11-CLS)</h1>
+    <main className="min-h-screen bg-linear-to-br from-slate-900 via-purple-900 to-slate-900 p-8">
+      <div className="max-w-5xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-5xl font-bold bg-linear-to-r from-blue-400 via-purple-400 to-pink-400 bg-clip-text text-transparent mb-2">
+            Face Emotion Detection
+          </h1>
+          <p className="text-gray-300 text-lg">Real-time emotion recognition with OpenCV & YOLO11</p>
+        </div>
 
-      <div className="space-y-2">
-        <div className="text-sm">สถานะ: {status}</div>
-        <div className="text-sm">
-          Emotion: <b>{emotion}</b> | Conf: <b>{(conf * 100).toFixed(1)}%</b>
+        {/* Status Card */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+          {/* Status */}
+          <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border border-purple-500/30 backdrop-blur-sm">
+            <div className="text-sm text-gray-400 mb-2">Status</div>
+            <div className="text-xl font-semibold text-blue-300 break">{status}</div>
+          </div>
+
+          {/* Emotion Display */}
+          <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border border-purple-500/30 backdrop-blur-sm">
+            <div className="text-sm text-gray-400 mb-2">Detected Emotion</div>
+            <div className="text-4xl font-bold bg-linear-to-r from-pink-400 to-rose-400 bg-clip-text text-transparent">
+              {emotion}
+            </div>
+          </div>
+
+          {/* Confidence */}
+          <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-2xl p-6 border border-purple-500/30 backdrop-blur-sm">
+            <div className="text-sm text-gray-400 mb-2">Confidence</div>
+            <div className="flex items-end gap-2">
+              <div className="text-3xl font-bold text-emerald-400">{(conf * 100).toFixed(1)}%</div>
+            </div>
+            <div className="mt-3 h-2 bg-slate-700 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-linear-to-r from-emerald-400 to-teal-400 transition-all duration-500"
+                style={{ width: `${conf * 100}%` }}
+              />
+            </div>
+          </div>
+        </div>
+
+        {/* Control Section */}
+        <div className="flex gap-4 mb-8 justify-center">
+          <button
+            className="px-8 py-3 rounded-xl font-semibold bg-linear-to-r from-blue-500 to-purple-600 hover:from-blue-600 hover:to-purple-700 text-white transition-all duration-300 transform hover:scale-105 shadow-lg hover:shadow-2xl active:scale-95"
+            onClick={startCamera}
+          >
+            ▶ Start Camera
+          </button>
+        </div>
+
+        {/* Canvas Display */}
+        <div className="bg-linear-to-br from-slate-800 to-slate-900 rounded-3xl p-2 border-2 border-purple-500/40 backdrop-blur-sm shadow-2xl overflow-hidden">
+          <video ref={videoRef} className="hidden" playsInline />
+          <canvas
+            ref={canvasRef}
+            className="w-full rounded-2xl bg-black/50"
+          />
+        </div>
+
+        {/* Info Section */}
+        <div className="mt-8 text-center">
+          <p className="text-gray-400 text-sm">
+            💡 Click <span className="text-blue-400 font-semibold">Start Camera</span> to begin emotion detection
+          </p>
         </div>
       </div>
-
-      <div className="flex gap-3">
-        <button
-          className="px-4 py-2 rounded bg-black text-white"
-          onClick={startCamera}
-        >
-          Start Camera
-        </button>
-      </div>
-
-      <div className="relative w-full max-w-3xl">
-        <video ref={videoRef} className="hidden" playsInline />
-        <canvas
-          ref={canvasRef}
-          className="w-full rounded border"
-        />
-      </div>
-
-      <p className="text-sm text-gray-600">
-        หมายเหตุ: ต้องกดปุ่ม Start เพื่อขอสิทธิ์เปิดกล้อง
-      </p>
     </main>
   );
 }
