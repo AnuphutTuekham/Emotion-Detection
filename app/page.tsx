@@ -268,19 +268,25 @@ export default function Home() {
       cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
       const faces = new cv.RectVector();
-      const msize = new cv.Size(0, 0);
-      faceCascade.detectMultiScale(gray, faces, 1.1, 3, 0, msize, msize);
+      const msize = new cv.Size(50, 50);
+      const maxsize = new cv.Size(Math.min(gray.rows, gray.cols), Math.min(gray.rows, gray.cols));
+      faceCascade.detectMultiScale(gray, faces, 1.05, 5, 0, msize, maxsize);
 
       // วาดกรอบ + เลือกใบหน้าที่ใหญ่สุด
       let bestRect: any = null;
       let bestArea = 0;
+      const MIN_FACE_SIZE = 100; // ขนาดใบหน้าต่ำสุด (px)
+      const MAX_FACE_SIZE = Math.min(canvas.width, canvas.height) * 0.8; // ขนาดใบหน้าสูงสุด
 
       for (let i = 0; i < faces.size(); i++) {
         const r = faces.get(i);
         const area = r.width * r.height;
-        if (area > bestArea) {
-          bestArea = area;
-          bestRect = r;
+        // ตรวจสอบว่าใบหน้าอยู่ในช่วงขนาดที่เหมาะสม
+        if (area >= MIN_FACE_SIZE * MIN_FACE_SIZE && area <= MAX_FACE_SIZE * MAX_FACE_SIZE) {
+          if (area > bestArea) {
+            bestArea = area;
+            bestRect = r;
+          }
         }
         ctx.strokeStyle = "lime";
         ctx.lineWidth = 2;
@@ -323,8 +329,15 @@ export default function Home() {
           if (probs[i] > probs[maxIdx]) maxIdx = i;
         }
 
-        setEmotion(classes[maxIdx] ?? `class_${maxIdx}`);
-        setConf(probs[maxIdx] ?? 0);
+        // เพิ่ม confidence threshold (ต้องมีความมั่นใจ > 40%)
+        const CONFIDENCE_THRESHOLD = 0.4;
+        if (probs[maxIdx] >= CONFIDENCE_THRESHOLD) {
+          setEmotion(classes[maxIdx] ?? `class_${maxIdx}`);
+          setConf(probs[maxIdx] ?? 0);
+        } else {
+          setEmotion("Unclear");
+          setConf(0);
+        }
 
         ctx.fillStyle = "rgba(0,0,0,0.6)";
         ctx.fillRect(bestRect.x, Math.max(0, bestRect.y - 28), 220, 28);
